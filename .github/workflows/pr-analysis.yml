@@ -1,0 +1,348 @@
+# Per-PR Test Case Generation
+#
+# Triggered when a PR is opened or updated on the spec repo.
+# Pulls the nightly base image (pre-built KG + FAISS), generates
+# diff HTML for the PR, runs the analysis pipeline, and posts
+# results as a PR comment.
+#
+# PR authors can add directives in the PR description to customize
+# the pipeline run. Use HTML comments so they don't render:
+#
+#   <!-- matter-rag: --llm-additional-context "This cluster uses HLS streaming." -->
+#   <!-- matter-rag: --cluster "Push AV Stream Transport Cluster" -->
+#   <!-- matter-rag: --negative-tests -->
+#   <!-- matter-rag: --no-coverage-gaps -->
+#
+# Multiple directives are supported (one per comment block).
+#
+# To use this workflow in the spec repo:
+#   1. Copy this file to the spec repo's .github/workflows/
+#   2. Set the PIPELINE_IMAGE secret to the base image URL
+#   3. Set the ANTHROPIC_API_KEY secret for LLM access
+#
+# Or trigger from the pipeline repo via workflow_dispatch with a PR URL.
+
+name: TC Generation
+
+on:
+  # Trigger from spec repo PRs (copy this workflow to the spec repo)
+  pull_request:
+    paths:
+      - 'src/**/*.adoc'
+    types: [opened, synchronize, reopened]
+
+  # Manual trigger with PR URL (from any repo)
+  workflow_dispatch:
+    inputs:
+      pr_url:
+        description: 'Spec PR URL (e.g., https://github.com/CHIP-Specifications/connectedhomeip-spec/pull/12345)'
+        required: true
+
+env:
+  BASE_IMAGE: ghcr.io/${{ github.repository }}/matter-rag-base:latest
+  # Override with your registry if different:
+  # BASE_IMAGE: your-registry/matter-rag-base:latest
+
+jobs:
+  generate-test-cases:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hours max (spec build ~30 min + pipeline ~30 min + buffer)
+    permissions:
+      contents: read
+      pull-requests: write  # to post PR comments
+
+    steps:
+      - name: Checkout spec repo
+        uses: actions/checkout@v4
+        with:
+          path: spec-repo
+          fetch-depth: 0  # full history needed for git merge-base
+
+      - name: Checkout pipeline repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/matter-qa
+          path: pipeline
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Determine PR URL
+        id: pr-url
+        run: |
+          if [ -n "${{ inputs.pr_url }}" ]; then
+            echo "url=${{ inputs.pr_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Parse PR description for pipeline directives
+        id: pr-directives
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request?.body || '';
+            // Parse <!-- matter-rag: --flag value --> directives
+            const directives = [];
+            const re = /<!--\s*matter-rag:\s*(.*?)\s*-->/g;
+            let match;
+            while ((match = re.exec(body)) !== null) {
+              directives.push(match[1].trim());
+            }
+            const args = directives.join(' ');
+            console.log(`Parsed PR directives: ${args || '(none)'}`);
+            core.setOutput('extra_args', args);
+
+      - name: Pull base image and extract data
+        working-directory: pipeline
+        run: |
+          python -c "
+          from src.fetcher.docker_base import extract_docker_base
+          from pathlib import Path
+          extract_docker_base('${{ env.BASE_IMAGE }}', Path('data'))
+          "
+
+      - name: Generate diff HTML and run analysis
+        id: pipeline
+        working-directory: pipeline
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python scripts/run_ghpr_analysis.py \
+            --pr-url ${{ steps.pr-url.outputs.url }} \
+            --spec-repo ${{ github.workspace }}/spec-repo \
+            --compare-only \
+            ${{ steps.pr-directives.outputs.extra_args }}
+
+      - name: Upload reports and logs as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tc-reports-pr-${{ github.event.pull_request.number || 'manual' }}
+          path: pipeline/reports/
+          retention-days: 30
+
+      - name: Post failure comment on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Try to read the spec diff build log for diagnostics
+            let buildLog = '';
+            const prNum = context.issue?.number || 'manual';
+            const logPaths = [
+              `pipeline/reports/pr_${prNum}/logs/spec_diff_build.log`,
+              'pipeline/logs/spec_diff_build.log',
+            ];
+            for (const lp of logPaths) {
+              try {
+                buildLog = fs.readFileSync(lp, 'utf8');
+                const lines = buildLog.split('\n');
+                buildLog = lines.slice(-40).join('\n');
+                break;
+              } catch (e) {}
+            }
+            if (!buildLog) buildLog = '(no build log found)';
+
+            const artifactUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## Matter RAG — Pipeline Failed',
+              '',
+              'The test case generation pipeline failed for this PR.',
+              '',
+              '<details>',
+              '<summary>Build log (last 40 lines)</summary>',
+              '',
+              '```',
+              buildLog,
+              '```',
+              '</details>',
+              '',
+              '**Common causes:**',
+              '- Spec HTML build failed (broken cross-references in unrelated files)',
+              '- Docker not available on the runner',
+              '- Missing API key (`ANTHROPIC_API_KEY` secret)',
+              '',
+              `> [Full logs](${artifactUrl}) (download from workflow artifacts)`,
+            ].join('\n');
+
+            // Find existing bot comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.body.includes('Matter RAG') && (c.body.includes('Test Case Analysis') || c.body.includes('Pipeline Failed'))
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+      - name: Post PR comment with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            // Find all report_data JSON files
+            function findFiles(dir, pattern) {
+              let results = [];
+              try {
+                const items = fs.readdirSync(dir, { withFileTypes: true });
+                for (const item of items) {
+                  const full = path.join(dir, item.name);
+                  if (item.isDirectory()) results = results.concat(findFiles(full, pattern));
+                  else if (item.name.match(pattern)) results.push(full);
+                }
+              } catch (e) {}
+              return results;
+            }
+
+            const reportFiles = findFiles('pipeline/reports', /report_data_.*\.json$/);
+            if (reportFiles.length === 0) {
+              console.log('No report files found — skipping PR comment');
+              return;
+            }
+
+            let totalMissing = 0;
+            let totalUpdates = 0;
+            let clusters = [];
+            let missingTCs = [];
+            let updateTCs = [];
+
+            for (const file of reportFiles) {
+              const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+              totalMissing += (data.missing_tests || []).length;
+              totalUpdates += (data.update_candidates || []).length;
+              const filter = data.cluster_filter;
+              if (filter) clusters.push(filter);
+
+              // Collect TC details for inline display
+              for (const tc of (data.missing_tests || [])) {
+                const title = tc.title || 'Untitled';
+                const adoc = tc.adoc_section || '';
+                // Extract purpose from adoc
+                const purposeMatch = adoc.match(/=== Purpose\n([\s\S]*?)(?:\n===|\n\n\[|$)/);
+                const purpose = purposeMatch ? purposeMatch[1].trim().substring(0, 200) : '';
+                // Extract procedure steps
+                const procMatch = adoc.match(/(?:=== (?:Test )?Procedure|=== Procedure)\n([\s\S]*?)(?:\n===|\|===|$)/);
+                let steps = '';
+                if (procMatch) {
+                  // Extract numbered steps from table or list format
+                  const raw = procMatch[1];
+                  const stepLines = raw.split('\n')
+                    .filter(l => l.match(/^\| \d+|^\d+\./))
+                    .map(l => l.replace(/^\|\s*/, '').replace(/^\d+\.\s*/, '').trim())
+                    .filter(l => l.length > 5)
+                    .slice(0, 10);  // max 10 steps in comment
+                  if (stepLines.length > 0) {
+                    steps = stepLines.map((s, i) => `${i+1}. ${s.substring(0, 120)}`).join('\n');
+                  }
+                }
+                missingTCs.push({ title, purpose, steps, cluster: tc.cluster || '' });
+              }
+
+              for (const tc of (data.update_candidates || [])) {
+                updateTCs.push({
+                  tc_id: tc.tc_id || '',
+                  summary: tc.change_summary || '',
+                  cluster: tc.cluster || '',
+                });
+              }
+            }
+
+            // Build the comment body
+            const lines = [
+              '## Matter RAG — Test Case Analysis',
+              '',
+              '| Metric | Count |',
+              '|--------|-------|',
+              `| New test cases needed | **${totalMissing}** |`,
+              `| Existing TCs to update | **${totalUpdates}** |`,
+              `| Clusters analyzed | ${clusters.length > 0 ? clusters.join(', ') : 'all'} |`,
+              '',
+            ];
+
+            // Inline new TCs with collapsible details
+            if (missingTCs.length > 0) {
+              lines.push('### New Test Cases', '');
+              for (const tc of missingTCs) {
+                lines.push(`<details>`);
+                lines.push(`<summary><strong>${tc.title}</strong>${tc.cluster ? ' — ' + tc.cluster : ''}</summary>`);
+                lines.push('');
+                if (tc.purpose) lines.push(`**Purpose**: ${tc.purpose}`, '');
+                if (tc.steps) lines.push('**Procedure**:', tc.steps, '');
+                lines.push('</details>', '');
+              }
+            }
+
+            // Inline update candidates
+            if (updateTCs.length > 0) {
+              lines.push('### Existing TCs to Update', '');
+              for (const tc of updateTCs) {
+                lines.push(`- **${tc.tc_id}**: ${tc.summary}`);
+              }
+              lines.push('');
+            }
+
+            const artifactUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            lines.push(
+              `> [Full HTML Report & LLM Logs](${artifactUrl}) (download from workflow artifacts)`,
+              '',
+              `_Generated by [Matter RAG Pipeline](https://github.com/${context.repo.owner}/${context.repo.repo}) in ${Math.round((Date.now() - new Date(context.payload.workflow_run?.created_at || Date.now()).getTime()) / 60000) || '?'} minutes_`,
+            );
+
+            const body = lines.join('\n');
+
+            // Find existing bot comment to update (avoid duplicates)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.body.includes('Matter RAG — Test Case Analysis')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }

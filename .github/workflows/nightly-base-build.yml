@@ -1,0 +1,72 @@
+# Nightly Base Image Build
+#
+# Rebuilds the pipeline base Docker image with latest spec master,
+# DM XMLs, KG, and FAISS index. Pushes to container registry.
+#
+# The per-PR workflow pulls this image to avoid rebuilding on every PR.
+# Runs at 2 AM UTC daily, or manually via workflow_dispatch.
+
+name: Build Base Image
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+  workflow_dispatch:      # manual trigger
+    inputs:
+      spec_branch:
+        description: 'Spec repo branch'
+        default: 'master'
+      sdk_branch:
+        description: 'SDK repo branch (for DM XMLs)'
+        default: 'master'
+      test_plans_branch:
+        description: 'Test plans repo branch'
+        default: 'master'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/matter-rag-base
+
+jobs:
+  build-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # 1 hour max (clone ~5 min + KG build ~20 min + Docker build ~15 min)
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout pipeline repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base image
+        env:
+          GITHUB_TOKEN: ${{ secrets.SPEC_REPO_TOKEN }}
+        run: |
+          python scripts/helper_scripts/build_docker_image.py \
+            --spec-branch ${{ inputs.spec_branch || 'master' }} \
+            --sdk-branch ${{ inputs.sdk_branch || 'master' }} \
+            --test-plans-branch ${{ inputs.test_plans_branch || 'master' }} \
+            --push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Tag with date
+        run: |
+          docker tag \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d)
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d)

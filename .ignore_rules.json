@@ -1,0 +1,25 @@
+{
+  "_comment": "Global document processing rules applied to ALL fetched documents before chunking.",
+  "_comment2": "Rules run in order. Per-source rules (in sources.json) run after these.",
+  "_comment3": "apply_to: optional list of file extensions; omit to apply to all types.",
+  "rules": [
+    {
+      "comment": "Strip copyright / license lines",
+      "type": "strip_regex",
+      "pattern": "(?i)^.*(copyright|spdx-license-identifier|all rights reserved).*$",
+      "scope": "line",
+      "apply_to": [".adoc", ".md", ".txt"]
+    },
+    {
+      "comment": "Remove AsciiDoc single-line comments (// but not URLs like http://)",
+      "type": "strip_regex",
+      "pattern": "^\\s*//(?!/).*$",
+      "scope": "line",
+      "apply_to": [".adoc"]
+    },
+    {
+      "comment": "Collapse 3 or more consecutive blank lines into one",
+      "type": "normalize_whitespace"
+    }
+  ]
+}

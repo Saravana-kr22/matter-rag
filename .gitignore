@@ -1,0 +1,65 @@
+# Secrets — never commit
+.env
+
+# Downloaded models (large binary files)
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+.venv/
+.venv*/
+venv/
+env/
+.Python
+
+# Data (can be large / regenerated)
+data/faiss_index/
+data/chroma/
+data/raw/
+data/processed/
+data/knowledge_graph/
+data/data_model/
+data/input_doc/
+data/test_plan_adocs/
+data/test_plans/
+data/matter_spec/
+data/cache/
+data/tc_index.json
+logs/
+logs/*
+
+# Input data folders tracked by git (add content manually):
+# data/data_model/   ← Matter DM XML files
+# data/matter_spec/  ← Matter spec HTML/adoc
+# data/test_plans/   ← Matter test plan HTML/adoc
+
+# Reports (generated output)
+reports/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker build artifacts
+Dockerfile.base
+data/manifest.json
+
+# macOS
+.DS_Store
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
