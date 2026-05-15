@@ -1,0 +1,40 @@
+# Matter RAG Pipeline — Docker Compose
+#
+# Volumes map host directories so all generated artifacts persist
+# between runs and are inspectable on the host.
+#
+# Usage:
+#   docker compose run --rm pipeline                              # use pre-built data
+#   docker compose run --rm -e PR_URL=https://github.com/... pipeline  # analyze a PR
+#   docker compose run --rm -e CLUSTER="On/Off" pipeline          # single cluster
+#   docker compose run --rm -e FORCE_REBUILD=1 pipeline           # rebuild KG + FAISS
+
+services:
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SPEC_BRANCH: master
+    image: matter-rag:latest
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - CLUSTER=${CLUSTER:-}
+      - FORCE_REBUILD=${FORCE_REBUILD:-0}
+      - PR_URL=${PR_URL:-}
+      - SPEC_ENTRY=${SPEC_ENTRY:-}
+      - PIPELINE_ARGS=${PIPELINE_ARGS:-}
+    volumes:
+      # Pre-built data (persists between runs)
+      - ./data/faiss_index:/app/data/faiss_index
+      - ./data/knowledge_graph:/app/data/knowledge_graph
+      - ./data/cache:/app/data/cache
+      # Input/output (inspectable on host)
+      - ./data/input_doc:/app/data/input_doc
+      - ./data/matter_spec:/app/data/matter_spec
+      - ./data/data_model:/app/data/data_model
+      - ./data/test_plans:/app/data/test_plans
+      # Reports and logs (output)
+      - ./reports:/app/reports
+      - ./logs:/app/logs

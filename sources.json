@@ -1,0 +1,111 @@
+{
+  "_comment": "Data source definitions for the Matter RAG pipeline. Each entry is fetched by fetch_node.",
+  "_comment2": "Set role='pr' for PR/change content, role='test_plan' for reference documents, role='spec' for Matter spec docs, role='data_model' for Matter DM XML files.",
+  "_comment3": "${VAR} tokens are substituted from environment variables at runtime.",
+  "_comment4": "Supported source types: github_pr, github_repo, github_tag_diff, local_folder, url, csv, matter_xml",
+  "_comment_github_repo": "Use type='github_repo' to fetch test plan .adoc files directly from GitHub and save locally.",
+  "_comment_github_repo_example": {
+    "id": "test_plans_github",
+    "type": "github_repo",
+    "role": "test_plan",
+    "repo": "project-chip/connectedhomeip",
+    "path": "src/app/tests/suites/certification",
+    "ref": "master",
+    "token": "${GITHUB_TOKEN}",
+    "extensions": [".adoc"],
+    "local_save_dir": "data/raw/test_plans",
+    "_note": "Remove this entry from _comment and add to 'sources' array to activate"
+  },
+  "_comment_spec_example": {
+    "id": "matter_spec",
+    "type": "local_folder",
+    "role": "spec",
+    "path": "data/matter_spec",
+    "extensions": ["*"],
+    "process_rules": [],
+    "_note": "Matter specification HTML/adoc documents. Feeds REQUIREMENT/BEHAVIOR_RULE nodes in the KG. Place spec files in data/matter_spec/ and add this entry to 'sources' to activate. extensions=['*'] processes every file in the folder."
+  },
+  "_comment_test_plans_html_example": {
+    "id": "test_plans_html",
+    "type": "local_folder",
+    "role": "test_plan",
+    "path": "data/test_plans",
+    "extensions": ["*"],
+    "exclude": ["interop_booklet.html", "*_draft*", "TODO_*"],
+    "_note": "Matter test plan HTML/adoc documents. Feeds TEST_CASE nodes in the KG and test plan vector DB. Place test plan files in data/test_plans/ and add this entry to 'sources' to activate. extensions=['*'] processes every file in the folder. 'exclude' accepts fnmatch patterns matched against the filename (not full path). E.g. ['*interop*', 'DRAFT_*.html'] to skip interop booklets and draft files."
+  },
+  "_comment_data_model_example": {
+    "id": "matter_data_model",
+    "type": "matter_xml",
+    "role": "data_model",
+    "path": "data/data_model",
+    "_note": "Matter DM XML files (CSA DevX format). Feeds canonical CLUSTER/ATTRIBUTE/COMMAND/EVENT/FEATURE nodes in the KG. Place XML files in data/data_model/ and add this entry to 'sources' to activate. Rebuild with --build-data-model."
+  },
+  "_comment_url_html_example": {
+    "id": "matter_spec_html",
+    "type": "url",
+    "role": "spec",
+    "url": "https://example.com/matter-spec.html",
+    "format": "raw_html",
+    "_note": "Use format='raw_html' to preserve HTML headings so HTMLLoader can split into sections. Use format='html' (default) to strip tags and treat as plain text."
+  },
+  "_comment_matter_diff_local_example": {
+    "id": "matter_spec_diff_local",
+    "type": "local_folder",
+    "role": "pr",
+    "path": "data/raw/spec_diff",
+    "extensions": [".html"],
+    "metadata": {"matter_diff": true},
+    "_note": "Drop appclusters_diff.html into data/raw/spec_diff/. The pipeline will expand it into one chunk per diff section. Optionally set matter_diff_cluster to restrict to a single cluster."
+  },
+  "_comment_matter_diff_url_example": {
+    "id": "matter_spec_diff_url",
+    "type": "url",
+    "role": "pr",
+    "url": "https://example.com/appclusters_diff.html",
+    "format": "matter_diff",
+    "matter_diff_cluster": "",
+    "matter_diff_section": "",
+    "_note": "Use format='matter_diff' to fetch a live diff HTML page. The pipeline extracts diff sections (ADDED/REMOVED/CHANGED) and uses them for vector + KG search before the LLM report step. Set matter_diff_cluster to restrict to a single cluster (e.g. 'On/Off')."
+  },
+  "_comment_test_plans_adoc_folder_example": {
+    "id": "test_plans_adoc_folder",
+    "type": "local_folder",
+    "role": "test_plans_adoc_folder",
+    "path": "data/test_plan_adocs",
+    "extensions": [".adoc"],
+    "_note": "Raw .adoc test plan files to be updated in-place by write_updated_testplan_node. The pipeline replaces TC sections from update_candidates and appends new TC sections from missing_tests. Per-cluster output files are written to reports/updated_testplans_<timestamp>/. Place .adoc files in data/test_plans_adoc/ and add this entry to 'sources' to activate."
+  },
+  "sources": [
+    {
+      "id": "test_plans_local",
+      "type": "local_folder",
+      "role": "test_plan",
+      "path": "data/test_plans",
+      "extensions": ["*"],
+      "exclude": ["interop_booklet.html"]
+    },
+    {
+      "id": "matter_spec_local",
+      "type": "local_folder",
+      "role": "spec",
+      "path": "data/matter_spec",
+      "extensions": ["*"],
+      "exclude": [],
+      "process_rules": []
+    },
+    {
+      "id": "matter_data_model",
+      "type": "matter_xml",
+      "role": "data_model",
+      "path": "data/data_model"
+    },
+    {
+      "id": "test_plans_adoc_folder",
+      "type": "local_folder",
+      "role": "test_plans_adoc_folder",
+      "path": "data/test_plan_adocs/src",
+      "extensions": [".adoc"]
+    }
+  ]
+}

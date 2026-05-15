@@ -1,0 +1,29 @@
+langgraph>=0.2.0
+langchain-core>=0.3.0
+anthropic>=0.34.0
+sentence-transformers>=3.0.0
+huggingface-hub>=0.24.0
+faiss-cpu>=1.8.0
+chromadb>=0.5.0
+psycopg2-binary>=2.9.0
+pgvector>=0.3.6
+networkx>=3.3
+pypdf>=4.0.0
+pandas>=2.0.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+requests>=2.32.0
+numpy>=1.26.0
+ollama>=0.3.0
+openai>=1.0.0                 # required for provider: lm_studio (LM Studio OpenAI-compatible API)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+fastapi>=0.111.0
+starlette>=0.37.0
+pydantic>=2.0.0
+uvicorn[standard]>=0.24.0
+typing_extensions>=4.10.0
+
+# Dev / test
+pytest>=8.0.0
+pytest-mock>=3.14.0
