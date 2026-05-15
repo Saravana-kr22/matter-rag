@@ -1,0 +1,287 @@
+# Protocol TC → Spec Section Mapping
+#
+# Maps protocol-area test case titles (keywords) and per-TC overrides to spec section
+# path substrings.  Used by test_plan_extractor._link_spec_records() to link protocol
+# TCs to precise spec requirement nodes instead of using chapter-level bulk matching.
+#
+# Resolution order (first match wins):
+#   1. tc_id_patterns  — exact TC-ID match (e.g. "TC-DD-1.2")
+#   2. title_patterns  — case-insensitive keyword in TC title
+#   3. Chapter-level fallback — _TC_PREFIX_TO_PROTO_AREA bulk match (always runs if
+#                               no map entry exists or map yields no hits)
+#
+# "sections" values are substring-matched against the cleaned section path stored in
+# the spec index under "_section:" keys.  Use lowercase; partial matches are fine.
+# Example: "manual pairing code" matches "_section:device discovery > manual pairing code"
+#
+# To add coverage for a new TC family:
+#   1. Add an entry under title_patterns (preferred) or tc_id_patterns.
+#   2. Run  python scripts/run_ghpr_analysis.py --build-knowledge-graph
+#      to rebuild the KG with the updated mappings.
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# PER-TC OVERRIDES  (exact TC-ID match; highest priority)
+# ──────────────────────────────────────────────────────────────────────────────
+tc_id_patterns: {}
+# Examples (uncomment and add sections to override):
+# tc_id_patterns:
+#   TC-DD-1.2:
+#     sections:
+#       - "manual pairing code"
+#       - "setup code"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TITLE KEYWORD PATTERNS  (case-insensitive substring match against TC title)
+# ──────────────────────────────────────────────────────────────────────────────
+title_patterns:
+
+  # ── DD: Device Discovery / Commissioning ─────────────────────────────────
+  "QR Code":
+    sections:
+      - "qr code"
+      - "setup code"
+
+  "Manual Pairing Code":
+    sections:
+      - "manual pairing code"
+      - "setup code"
+
+  "NFC":
+    sections:
+      - "nfc"
+      - "near field communication"
+
+  "Commissionable Node":
+    sections:
+      - "commissionable node"
+      - "commissionable node discovery"
+
+  "DNS-SD":
+    sections:
+      - "dns-sd"
+      - "commissionable node discovery"
+
+  "Operational Discovery":
+    sections:
+      - "operational discovery"
+      - "operational node discovery"
+
+  "BLE Discovery":
+    sections:
+      - "ble"
+      - "bluetooth low energy"
+      - "commissioning advertisement"
+
+  "On-Network":
+    sections:
+      - "on-network"
+      - "commissionable node"
+
+  "Commissioning":
+    sections:
+      - "commissioning"
+      - "commissionable node"
+      - "setup code"
+
+  # ── SC: Secure Channel ───────────────────────────────────────────────────
+  "CASE":
+    sections:
+      - "case"
+      - "certificate authenticated session establishment"
+
+  "PASE":
+    sections:
+      - "pase"
+      - "password authenticated session establishment"
+
+  "MRP":
+    sections:
+      - "mrp"
+      - "message reliability protocol"
+
+  "TCP":
+    sections:
+      - "tcp connection"
+      - "transmission control protocol"
+
+  "Session Establishment":
+    sections:
+      - "session establishment"
+      - "case"
+      - "pase"
+
+  "Sigma":
+    sections:
+      - "sigma"
+      - "case"
+
+  # ── IDM: Interaction Data Model ──────────────────────────────────────────
+  "Read Attribute":
+    sections:
+      - "read transaction"
+      - "read attribute"
+      - "read interaction"
+
+  "Write Attribute":
+    sections:
+      - "write transaction"
+      - "write attribute"
+      - "write interaction"
+
+  "Subscribe Attribute":
+    sections:
+      - "subscribe interaction"
+      - "subscription"
+      - "subscribe attribute"
+
+  "Invoke Command":
+    sections:
+      - "invoke interaction"
+      - "invoke command"
+
+  "Report Data":
+    sections:
+      - "report data"
+      - "subscribe interaction"
+
+  "Timed":
+    sections:
+      - "timed request"
+      - "timed interaction"
+
+  "Chunked":
+    sections:
+      - "chunked"
+      - "list chunking"
+
+  "Wildcard":
+    sections:
+      - "wildcard"
+      - "attribute paths"
+
+  "Event Read":
+    sections:
+      - "event"
+      - "event interaction"
+      - "read interaction"
+
+  "IM Status":
+    sections:
+      - "status response"
+      - "status codes"
+
+  # ── BDX: Bulk Data eXchange ──────────────────────────────────────────────
+  "Initiator":
+    sections:
+      - "bdx initiator"
+      - "sender initiated"
+
+  "Receiver":
+    sections:
+      - "bdx receiver"
+      - "receiver initiated"
+
+  "BDX Transfer":
+    sections:
+      - "bulk data exchange"
+      - "bdx"
+
+  # ── DA: Device Attestation ───────────────────────────────────────────────
+  "Attestation":
+    sections:
+      - "device attestation"
+      - "attestation"
+
+  "DAC":
+    sections:
+      - "device attestation certificate"
+      - "dac"
+      - "attestation"
+
+  "CSR":
+    sections:
+      - "certificate signing request"
+      - "csr"
+      - "operational credentials"
+
+  "Root CA":
+    sections:
+      - "root ca"
+      - "root certificate authority"
+      - "operational credentials"
+
+  "NOC":
+    sections:
+      - "node operational credential"
+      - "noc"
+      - "operational credentials"
+
+  "ICAC":
+    sections:
+      - "intermediate ca"
+      - "icac"
+      - "operational credentials"
+
+  # ── ACE: Access Control ──────────────────────────────────────────────────
+  "Access Control":
+    sections:
+      - "access control"
+      - "access control list"
+
+  "ACL":
+    sections:
+      - "access control list"
+      - "acl"
+
+  "Privilege":
+    sections:
+      - "privilege"
+      - "access privilege"
+      - "access control"
+
+  "Subject":
+    sections:
+      - "subject"
+      - "access control subject"
+      - "access control"
+
+  # ── JF / JFADMIN: Fabric Joining Administrator ────────────────────────────
+  "Fabric":
+    sections:
+      - "fabric"
+      - "joining fabric"
+      - "operational credentials"
+
+  "Open Commissioning Window":
+    sections:
+      - "commissioning window"
+      - "open commissioning"
+
+  "Commissioner-Generated Passcode":
+    sections:
+      - "commissioner-generated passcode"
+      - "commissioning window"
+
+  "Node Removal":
+    sections:
+      - "node removal"
+      - "remove fabric"
+      - "operational credentials"
+
+  # ── MCORE: Matter Core / Multi-Fabric ─────────────────────────────────────
+  "Multi-Fabric":
+    sections:
+      - "multi-fabric"
+      - "fabric"
+
+  "Subscription":
+    sections:
+      - "subscription"
+      - "subscribe interaction"
+      - "subscribe attribute"
+
+  "Group":
+    sections:
+      - "group"
+      - "group messaging"

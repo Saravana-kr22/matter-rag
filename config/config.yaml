@@ -1,0 +1,379 @@
+# ---------------------------------------------------------------------------
+# Matter RAG — Master Configuration
+#
+# Override precedence (highest wins):
+#   1. Explicit overrides dict passed to load_config(overrides={...})
+#   2. Environment variables:  MATTER_RAG__<SECTION>__<KEY>=value
+#      e.g.  MATTER_RAG__LLM__PROVIDER=local
+#            MATTER_RAG__PIPELINE__REBUILD_INDEX=true
+#   3. Values in this file
+#   4. Dataclass defaults (src/config/models.py)
+#
+# String values support ${ENV_VAR} substitution.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# LLM
+# ---------------------------------------------------------------------------
+llm:
+  provider: claude_subprocess   # "claude_subprocess" (local claude CLI) | "claude_cli" (Anthropic SDK) | "local" (Ollama) | "lm_studio" (LM Studio) | "gemini" (Google Gemini)
+  model: claude-sonnet-4-6      # Anthropic model id  (claude_cli only)
+  local_model: llama3.2         # Ollama model name   (local only)
+  temperature: 0.0              # 0.0 = most deterministic output
+  max_tokens: 4096              # max output tokens per LLM call
+  subprocess_timeout: 1200       # seconds before claude subprocess is killed (claude_subprocess only)
+  call_log_path: logs/llm_calls.jsonl  # JSONL log of every prompt+response; set "" to disable
+  # LM Studio settings — only used when provider: lm_studio
+  lm_studio_url: http://localhost:1234/v1   # LM Studio local server (start via LM Studio → Local Server)
+  lm_studio_model: qwen3-5.9b              # must match the model name shown in LM Studio
+  # Google Gemini settings — only used when provider: gemini
+  gemini_model: gemini-1.5-flash           # e.g. gemini-2.0-flash, gemini-1.5-pro
+  gemini_api_key: ""                       # or set GEMINI_API_KEY env var
+  max_prompt_chars: 0                       # 0 = auto-detect from model context; set manually to override
+
+# ---------------------------------------------------------------------------
+# Embeddings
+# ---------------------------------------------------------------------------
+embeddings:
+  model: BAAI/bge-large-en-v1.5 # HuggingFace model id; 1024-dim, best retrieval quality
+  device: mps                   # "mps" (Apple Silicon GPU) | "cpu" | "cuda"
+  batch_size: 64                # larger batches are more efficient on GPU
+  normalize: true               # L2-normalise vectors (required for cosine similarity)
+  cache_dir: ~/.cache/huggingface/hub  # HuggingFace hub cache — where models are stored after download
+  offline: true                 # true → use cached model, skip HF network check on every run
+
+# ---------------------------------------------------------------------------
+# Database (vector store)
+# ---------------------------------------------------------------------------
+database:
+  backend: faiss                # "faiss" (default) | "chroma" | "postgres" | "docker"
+
+  # --- FAISS (file-based, no server required) ---
+  faiss_index_path: data/faiss_index/matter.index  # binary FAISS index file
+  metadata_path: data/faiss_index/metadata.json    # JSON sidecar with doc metadata
+  index_type: IndexFlatIP       # "IndexFlatIP" (exact) | "IndexIVFFlat" (approx, faster at scale)
+
+  # --- ChromaDB (persistent local vector DB) ---
+  chroma_persist_dir: data/chroma      # directory where ChromaDB persists its files
+  chroma_collection: matter_tc         # collection name inside ChromaDB
+
+  # --- PostgreSQL + pgvector ---
+  postgres_url: ${POSTGRES_URL}        # e.g. postgresql://user:pass@localhost/matterdb
+  postgres_table: matter_embeddings    # table that stores vectors + JSONB metadata
+
+  # --- Docker vector store service ---
+  # Set backend: docker to use a pre-built Docker image instead of a local FAISS index.
+  # The pipeline still creates embeddings and can send them to the service.
+  docker_vector_store_url: http://localhost:8001   # URL of the Docker vector store REST API
+  docker_timeout: 30            # HTTP request timeout in seconds
+
+# ---------------------------------------------------------------------------
+# Fetcher
+# ---------------------------------------------------------------------------
+fetcher:
+  github_token: ${GITHUB_TOKEN} # GitHub PAT — set GITHUB_TOKEN env var
+  github_api_url: https://api.github.com
+  default_repo: project-chip/connectedhomeip
+  github_timeout: 60            # seconds per request (increase on slow/VPN networks)
+  github_max_retries: 3         # retry on timeout or 5xx; waits 2s, 4s, 8s between attempts
+  local_extensions:             # file extensions loaded from local directories
+    - .adoc
+    - .pdf
+    - .csv
+    - .md
+    - .txt
+    - .html
+    - .htm
+
+# ---------------------------------------------------------------------------
+# Loader  (raw document → section splits)
+# ---------------------------------------------------------------------------
+loader:
+  chunk_size: 1000              # characters per chunk (fallback when no chunker config)
+  chunk_overlap: 200            # overlap between consecutive chunks
+  adoc_section_split: true      # split AsciiDoc on "==" headings before chunking
+
+# ---------------------------------------------------------------------------
+# Chunker  (section text → Document chunks)
+# ---------------------------------------------------------------------------
+chunker:
+  chunker_type: matter_tc       # "matter_tc" (TC-aware) | "generic" (sliding window)
+  chunk_size: 1000              # characters per chunk
+  chunk_overlap: 200            # overlap between consecutive chunks
+
+  # ignore_rules: strip matching text before chunking (matter_tc only).
+  # Each rule has:
+  #   pattern        — text string or regex to match
+  #   match          — "contains" (default) | "startswith" | "exact" | "regex"
+  #   scope          — "line" (default) | "paragraph" | "block"
+  #   case_sensitive — false (default) | true
+  #
+  # ignore_rules:
+  #   - pattern: "Copyright"
+  #     scope: paragraph
+  #     match: contains
+  #   - pattern: "NOTE:"
+  #     scope: line
+  #     match: startswith
+  #   - pattern: "This document is subject to change without notice."
+  #     scope: line
+  #     match: exact
+  #   - pattern: "^\\s*//"
+  #     scope: line
+  #     match: regex
+  ignore_rules: []
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
+pipeline:
+  build_test_plan_vectors: false  # true → re-chunk, embed, save test plan vector DB (run once)
+  build_knowledge_graph: false    # true → rebuild and save knowledge graph (run once)
+  build_data_model: false         # true → re-ingest Matter DM XML schema into KG (run once)
+  rebuild_index: false            # backward-compat alias for build_test_plan_vectors
+  convert_adoc_to_html: false     # true → convert .adoc docs to HTML before loading
+                                  # requires 'asciidoctor' CLI to be installed
+  search_top_k: 10              # candidate test cases retrieved per PR chunk
+  similarity_threshold: 0.65   # minimum cosine score to keep a search result (0–1)
+  llm_confidence_threshold: 0.6 # rule-based confidence below this → LLM fallback in change extractor
+  output_dir: reports           # directory where Markdown + JSON reports are written
+  tc_index_path: data/cache/tc_index.json  # pre-built TC-ID → adoc file routing index
+                                     # rebuild with: python scripts/build_tc_index.py
+  system_prompt_skills_file: "llm_prompts/matter_test_coverage_and_structure.md"
+                                     # markdown file appended to LLM system prompt as extra
+                                     # instructions; leave empty or delete file to disable
+  spec_sections: []                  # Tier 2: comma-separated spec section path prefixes injected
+                                     # verbatim into the 2nd/3rd-pass expand prompt.
+                                     # Example: ["11.7.1.8", "11.7.2.2"]
+                                     # Can also be set via --spec-sections CLI flag.
+  llm_additional_context: "llm_prompts/additional_context"  # Tier 3: per-pass behavioral guidelines directory
+                                     # Contains all.md, pass2.md, pass3.md — injected into respective passes.
+                                     # Can also be set via --llm-additional-context CLI flag.
+  expand_section_max_chars: 15000    # Max chars of spec section text per TC expand prompt.
+                                     # 0 = no limit (full section, best quality, higher token cost).
+  second_pass_expand_cap: 20         # Max TC expand LLM calls per cluster in second_pass_tc_gen_node.
+
+# ---------------------------------------------------------------------------
+# Knowledge Graph
+# ---------------------------------------------------------------------------
+knowledge_graph:
+  max_depth: 3                  # max hops when traversing related nodes
+  relationship_extraction: true # use LLM to extract cluster/command/attribute entities
+  backend: local                # "local" (default, NetworkX in-process) | "docker"
+  graph_store_path: data/knowledge_graph/matter_kg.json  # persisted KG file (local backend)
+  spec_extractor_workers: 0     # parallel workers for spec HTML parsing; 0 = auto (min(docs, cpu_count, 8))
+
+  # --- Docker knowledge graph service ---
+  # Set backend: docker to use a pre-built Docker image instead of a local NetworkX graph.
+  docker_url: http://localhost:8002     # URL of the Docker KG REST API
+  docker_timeout: 30            # HTTP request timeout in seconds
+
+  # --- LLM-assisted spec refinement (optional) ---
+  # When enabled (or when --build-knowledge-graph-withLLM is passed), the LLM reads
+  # each spec section and adds cross-cluster DEPENDS_ON + REQ→entity REFERENCES edges
+  # that rule-based extraction cannot find from structured XML alone.
+  # Results are cached by content hash so unchanged sections are free on re-runs.
+  llm_refinement_enabled: false         # true → always run LLM refinement when building KG
+  llm_refinement_max_sections: 200      # cost-control: stop after N sections
+  llm_refinement_cache_path: data/knowledge_graph/spec_refiner_cache.json
+
+  # LLM provider override for spec refinement.
+  # When set, these values override the global llm: config only for the refinement step,
+  # allowing you to run refinement on a cheap local model (Ollama) while the rest of the
+  # pipeline continues to use the frontier model.
+  #
+  # Example — use a local Ollama model for refinement:
+  #   llm_refinement_provider: local
+  #   llm_refinement_local_model: llama3.2
+  #
+  # Leave both empty to use the global llm: config (frontier Claude by default).
+  llm_refinement_provider: ""           # "" (use global llm config) | "local" | "claude_cli" | "claude_subprocess"
+  llm_refinement_local_model: ""        # Ollama model name when llm_refinement_provider is "local"
+
+  # Sections to consolidate into PROMPT_SECTION nodes during KG build.
+  # Each entry: path_prefix — matched against section_path in the KG (number-agnostic)
+  #             label       — used as node ID suffix and system-prompt header
+  # Section numbers are stripped before matching, so "Conformance" matches
+  # "7.3. Conformance", "8.3. Conformance", etc. — survives spec renumbering.
+  # Add or remove entries here to control what lands in every LLM system prompt.
+  # No code changes required — just rebuild the KG after editing this list.
+  #
+  # Protocol-area entries (summary_file + tc_prefix_filter):
+  #   summary_file      — path to pre-generated MD summary (llm_prompts/spec_context_summaries/)
+  #                        generated by: python scripts/helper_scripts/generate_spec_summaries.py
+  #   tc_prefix_filter  — inject this entry only when the PR chunk's section_path matches
+  #                        path_prefix (i.e. the chunk is from this protocol area)
+  #   char_cap          — max chars from summary_file to inject (0 = no cap)
+  prompt_sections:
+    # ── DM spec sections (KG-backed, injected for all cluster PRs) ────────────
+    - path_prefix: "Data Model Specification > Conformance"
+      label: "Conformance"
+    - path_prefix: "Data Model Specification > Access"
+      label: "Access"
+    - path_prefix: "Data Model Specification > Other Qualities"
+      label: "Other Qualities"
+
+    # ── Protocol-area sections (summary-backed, injected per matching chunk) ──
+    # Run generate_spec_summaries.py to populate llm_prompts/spec_context_summaries/
+    - path_prefix: "Interaction Model Specification"
+      label: "IDM Protocol"
+      summary_file: "llm_prompts/spec_context_summaries/IDM_summary.md"
+      tc_prefix_filter: ["IDM"]
+      char_cap: 10000
+
+    - path_prefix: "Secure Channel > Session Establishment > Passcode-Authenticated Session Establishment"
+      label: "SC PASE"
+      summary_file: "llm_prompts/spec_context_summaries/SC_PASE_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 8000
+
+    - path_prefix: "Secure Channel > Session Establishment > Certificate Authenticated Session Establishment"
+      label: "SC CASE"
+      summary_file: "llm_prompts/spec_context_summaries/SC_CASE_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 8000
+
+    - path_prefix: "Secure Channel > Message Exchanges"
+      label: "SC MRP"
+      summary_file: "llm_prompts/spec_context_summaries/SC_MRP_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 8000
+
+    - path_prefix: "Secure Channel > Group Communication"
+      label: "SC Group"
+      summary_file: "llm_prompts/spec_context_summaries/SC_Group_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 8000
+
+    - path_prefix: "Secure Channel > Group Key Management"
+      label: "SC GroupKey"
+      summary_file: "llm_prompts/spec_context_summaries/SC_GroupKey_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 8000
+
+    - path_prefix: "Secure Channel > Secure Communications over TCP"
+      label: "SC TCP"
+      summary_file: "llm_prompts/spec_context_summaries/SC_TCP_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 6000
+
+    - path_prefixes:
+        - "Secure Channel > Message Frame Format"
+        - "Secure Channel > Message Framing Over Stream-Oriented Transports"
+        - "Secure Channel > Message Counters"
+        - "Secure Channel > Message Processing"
+        - "Secure Channel > Message Security"
+        - "Secure Channel > Message Privacy"
+      label: "SC Message Security"
+      summary_file: "llm_prompts/spec_context_summaries/SC_MsgSec_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 8000
+
+    - path_prefix: "Secure Channel > IPv6 Reachability"
+      label: "SC IPv6"
+      summary_file: "llm_prompts/spec_context_summaries/SC_IPv6_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 6000
+
+    - path_prefix: "Secure Channel > Discovery"
+      label: "SC Discovery"
+      summary_file: "llm_prompts/spec_context_summaries/SC_Discovery_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 6000
+
+    - path_prefix: "Secure Channel > NFC Transport Layer"
+      label: "SC NFC"
+      summary_file: "llm_prompts/spec_context_summaries/SC_NFC_summary.md"
+      tc_prefix_filter: ["SC"]
+      char_cap: 6000
+
+    - path_prefix: "Commissioning > Commissioning Flows"
+      label: "DD Commissioning Flows"
+      summary_file: "llm_prompts/spec_context_summaries/DD_CommFlows_summary.md"
+      tc_prefix_filter: ["DD", "MC", "MCORE"]
+      char_cap: 10000
+
+    - path_prefix: "Commissioning"
+      label: "DD Protocol"
+      summary_file: "llm_prompts/spec_context_summaries/DD_summary.md"
+      tc_prefix_filter: ["DD", "MC", "MCORE"]
+      char_cap: 10000
+
+    - path_prefix: "Device Attestation and Operational Credentials"
+      label: "DA Protocol"
+      summary_file: "llm_prompts/spec_context_summaries/DA_summary.md"
+      tc_prefix_filter: ["DA"]
+      char_cap: 10000
+
+    - path_prefix: "System Model Specification > Access Control"
+      label: "ACE Protocol"
+      summary_file: "llm_prompts/spec_context_summaries/ACE_summary.md"
+      tc_prefix_filter: ["ACE"]
+      char_cap: 8000
+
+    - path_prefix: "Multiple Fabrics > Joint Fabric"
+      label: "JF Protocol"
+      summary_file: "llm_prompts/spec_context_summaries/JF_summary.md"
+      tc_prefix_filter: ["JF", "JFADMIN"]
+      char_cap: 10000
+
+    - path_prefix: "Multiple Fabrics > Fabric Synchronization"
+      label: "FS Protocol"
+      summary_file: "llm_prompts/spec_context_summaries/FS_summary.md"
+      tc_prefix_filter: ["FS"]
+      char_cap: 8000
+
+# ---------------------------------------------------------------------------
+# Re-ranker  (sits between vector retrieval and LLM analysis)
+# ---------------------------------------------------------------------------
+reranker:
+  enabled: true             # false → skip re-ranking, pass raw vector results to LLM
+                            # Useful for debugging or when the KG / structured changes
+                            # are unavailable and vector order is already good enough.
+
+  # Scoring component weights.
+  # Each component produces a raw score in [0, 1] which is multiplied by the weight below.
+  # Final candidate score = min(1.0, sum of all weighted components).
+  # Raise a weight to emphasise that signal; set to 0.0 to disable a component.
+  entity_overlap:             0.25  # matched entity names from the structured change record
+  cluster_match:              0.15  # cluster name match (exact or token-level)
+  condition_effect_overlap:   0.15  # test covers both condition AND effect of a behaviour rule
+  intent_match:               0.15  # test intent alignment with ChangeKind
+  kg_direct_bonus:            0.20  # KG has a direct edge to this test case (authoritative)
+  kg_indirect_bonus:          0.08  # KG has a 2-hop link to this test case
+  lexical_similarity:         0.08  # token overlap between query and candidate text
+  chunk_type_bonus:           0.05  # chunk type preference: intent_summary > test_step > setup
+  retrieval_score:            0.04  # original cosine similarity passthrough (tiebreaker)
+
+# ---------------------------------------------------------------------------
+# Analysis  (proactive quality checks — PICS validation and coverage gaps)
+# Run via:  python scripts/run_pics_analysis.py
+#           python scripts/run_coverage_analysis.py
+# ---------------------------------------------------------------------------
+analysis:
+  max_llm_calls_per_run: 0      # 0 = unlimited; set >0 to cap LLM calls per run
+  dm_dir: data/data_model       # directory containing Matter DM XML cluster files
+  output_dir: reports           # directory for analysis HTML/JSON reports
+  parallel_workers: 4           # concurrent LLM calls for analysis pipelines (1 = sequential)
+  tasks:                        # which tasks to enable (pics | gaps)
+    - gaps
+    - pics
+  sdk_dir: ""                   # root of connectedhomeip SDK repo (set to enable SDK coverage analysis)
+                                # e.g. /Users/you/code/connectedhomeip
+                                # cluster implementations: {sdk_dir}/src/app/clusters/
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: VERBOSE                # "VERBOSE" (default, all detail) | "DEBUG" | "INFO" | "WARNING" | "ERROR"
+                                # Set to "INFO" or higher in production to reduce log volume.
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+# ---------------------------------------------------------------------------
+# Spec Repo — for auto-generating diff HTMLs from PRs
+# ---------------------------------------------------------------------------
+spec_repo:
+  path: ""                      # local clone path; auto-clones to /tmp if empty. Set via --spec-repo CLI or overlay config.
+  url: "https://github.com/CHIP-Specifications/connectedhomeip-spec.git"
+  docker_image: "ghcr.io/chip-specifications/chip-documentation:21"
